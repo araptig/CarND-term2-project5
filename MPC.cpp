@@ -6,7 +6,7 @@
 using CppAD::AD;
 
 // Global parameters used both be GF_eval & MPC
-size_t N = 25;							// steps
+size_t N = 10;							// steps
 size_t x_start = 0;
 size_t y_start = x_start + N;
 size_t psi_start = y_start + N;
@@ -21,15 +21,23 @@ class FG_eval
  public:
   // Fitted polynomial coefficients
   Eigen::VectorXd coeffs;
-  double ref_v;
-  double dt;
-  double Lf;
-  FG_eval(Eigen::VectorXd coeffs)
+  const double ref_v            = 45;
+  const double dt               = 0.1;
+  const double Lf	 			= 2.67;
+
+  const double wt_cte 			= 100.0;
+  const double wt_orientation   = 100;
+  const double wt_velocity      = 1;
+  const double wt_steer_angle	= 0;
+  const double wt_steer_angle_d = 0;
+  const double wt_acc           = 0;
+  const double wt_acc_d         = 0;
+
+
+
+  FG_eval(Eigen::VectorXd _coeffs)
   {//construct
-	  this->coeffs = coeffs;
-	  ref_v        = 40.0;
-	  dt           = 0.05;
-	  Lf           = 2.67;
+	  coeffs       		= _coeffs;
   }
 
   // define ADvector to interact with CppAD
@@ -46,23 +54,23 @@ class FG_eval
 	  // The part of the cost based on the reference state.
 	  for (unsigned int t = 0; t < N; t++)
 	  {//cost
-		  fg[0] += CppAD::pow(vars[cte_start + t], 2);		// cte
-	      fg[0] += CppAD::pow(vars[epsi_start + t], 2);		// orientation
-	      fg[0] += CppAD::pow(vars[v_start + t] - ref_v, 2);  // velocity penalty
+		  fg[0] += wt_cte*CppAD::pow(vars[cte_start + t], 2);		 // cte
+	      fg[0] += wt_orientation*CppAD::pow(vars[epsi_start + t], 2);		 // orientation
+	      fg[0] += wt_velocity*CppAD::pow(vars[v_start + t] - ref_v, 2); // velocity mismatch penalty
 	   }
 
 	    // Minimize the use of actuators.
 	    for (unsigned int t = 0; t < N - 1; t++)
 	    {
-	    	fg[0] += CppAD::pow(vars[delta_start + t], 2);  	// delta amplitude penalty
-	        fg[0] += CppAD::pow(vars[a_start + t], 2);			// acceleration amplitude penalty
+	    	fg[0] += wt_steer_angle*CppAD::pow(vars[delta_start + t], 2);  	// delta amplitude penalty
+	        fg[0] += wt_acc*CppAD::pow(vars[a_start + t], 2);			// acceleration amplitude penalty
 	    }
 
 	    // Minimize the value gap between sequential actuations.
 	    for (unsigned int t = 0; t < N - 2; t++)
 	    {
-	    	fg[0] += CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-	        fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+	    	fg[0] += wt_steer_angle_d * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+	        fg[0] += wt_acc_d * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
 	    }
 
 	    // Setup model Constraints
@@ -101,8 +109,8 @@ class FG_eval
 	    	AD<double> delta0 = vars[delta_start + t - 1];
 	    	AD<double> a0 = vars[a_start + t - 1];
 
-	    	AD<double> f0 = coeffs[0] + coeffs[1] * x0;
-	    	AD<double> psides0 = CppAD::atan(coeffs[1]);
+	    	AD<double> f0 = coeffs[0] + coeffs[1]*x0 + coeffs[2]*x0*x0 + coeffs[3]*x0*x0*x0;
+	    	AD<double> psides0 = CppAD::atan(coeffs[1] + 2*coeffs[2]*x0 + 3*coeffs[3]*x0*x0);
 
 	    	// equations for the model:
 	    	// x_[t+1] = x[t] + v[t] * cos(psi[t]) * dt
@@ -113,7 +121,7 @@ class FG_eval
 	    	// epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
 	    	fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
 	    	fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
-	    	fg[1 + psi_start + t] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
+	    	fg[1 + psi_start + t] = psi1 - (psi0 - v0 * delta0 / Lf * dt);//  + -> -
 	    	fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
 	    	fg[1 + cte_start + t] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
 	    	fg[1 + epsi_start + t] = epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
@@ -124,7 +132,7 @@ class FG_eval
 
 MPC::MPC()
 {
-	max_steering_angle_rad = 1.0;
+	max_steering_angle_rad = .436332;
 	max_acc                = 1.0;
 
 	// N time-steps == N-1 actuations
@@ -251,6 +259,14 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs)
   // Cost
   auto cost = solution.obj_value;
   std::cout << "Cost " << cost << std::endl;
+
+  traj_x = {};
+  traj_y = {};
+  for (unsigned int i = 0; i < N; i++)
+  {
+      traj_x.push_back(solution.x[x_start + i]);
+      traj_y.push_back(solution.x[y_start + i]);
+  }
 
   //Return the first actuator values. The variables can be accessed with
   return {solution.x[delta_start],   solution.x[a_start]};

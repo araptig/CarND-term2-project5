@@ -104,50 +104,49 @@ int main()
         string event = j[0].get<string>();
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          vector<double> ptsx = j[1]["ptsx"];
-          vector<double> ptsy = j[1]["ptsy"];
+          vector<double> ptsx = j[1]["ptsx"];  //in map coordinates
+          vector<double> ptsy = j[1]["ptsy"];  //in map coordinates
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
 
-          //??
           for(unsigned int i = 0; i < ptsx.size(); i++)
-          {
-        	  //shift car reference angle to 90 degrees
+          {//map coordinates --> car coordinates
               double shift_x = ptsx[i] - px;
               double shift_y = ptsy[i] - py;
+              double cos_p   = cos(psi);
+              double sin_p   = sin(psi);
 
-              ptsx[i] = (shift_x * cos(0-psi)-shift_y*sin(0-psi));
-              ptsy[i] = (shift_x * sin(0-psi)-shift_y*cos(0-psi));
+              ptsx[i] =  shift_x * cos_p  +  shift_y * sin_p;
+              ptsy[i] = -shift_x * sin_p  +  shift_y * cos_p;
            }
 
+          // vector --> eigen
            double* ptrx = &ptsx[0];
            Eigen::Map<Eigen::VectorXd> ptsx_transform(ptrx, 6);
-
            double* ptry = &ptsy[0];
            Eigen::Map<Eigen::VectorXd> ptsy_transform(ptry, 6);
-
-
-          // coefficients of trajectory
+          // coefficients of trajectory in car coordinates
           Eigen::VectorXd coeffs = polyfit(ptsx_transform, ptsy_transform, poly_order);
-          double cte = polyeval(coeffs, px) - py;
-          // ------------------------------
-          // ONLY because poly_order = 1
-          // ------------------------------
-          double epsi = psi - atan(coeffs[1]);
 
+          // all in car coordinates
+          //double cte = polyeval(coeffs, px) - py;
+          //double epsi = psi - atan(coeffs[1]);
+          double cte  = coeffs[0];
+          double epsi = - atan(coeffs[1]);
 
           Eigen::VectorXd state(6);
-          {//
-        	  state << px, py, psi, v, cte, epsi;
+          {//px=0, py=0, psi=0
+        	  //state << px, py, psi, v, cte, epsi;
+        	  state << 0, 0, 0, v, cte, epsi;
           }//
 
           vector<double> control = mpc.Solve(state,coeffs);
 
           //steering angle and throttle using MPC
           // Both are in between [-1, 1]==> made constraint in MPC.CPP
-          double steer_value    = control[0];
+          double steer_value    = control[0]/ deg2rad(25);
           double throttle_value = control[1];
 
           json msgJson;
@@ -157,24 +156,18 @@ int main()
           msgJson["throttle"] = throttle_value;
 
           //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals;
-          vector<double> mpc_y_vals;
-
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Green line
-
+          vector<double> mpc_x_vals = mpc.traj_x;
+          vector<double> mpc_y_vals = mpc.traj_y;
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
 
           //Display the waypoints/reference line
           vector<double> next_x_vals;
           vector<double> next_y_vals;
-
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
-
-          msgJson["next_x"] = next_x_vals;
-          msgJson["next_y"] = next_y_vals;
+          msgJson["next_x"] = ptsx;
+          msgJson["next_y"] = ptsy;
 
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
@@ -188,7 +181,7 @@ int main()
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          this_thread::sleep_for(chrono::milliseconds(1));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else

@@ -17,7 +17,9 @@ public:
 	size_t n_vars;
 	size_t n_constraints;
 
-	// Solve the model given an initial state and polynomial coefficients.
+	vector<double> traj_x;	//trajectory x component
+	vector<double> traj_y;	//trajectory y component
+
 	// Return the first actuatotions.
 	vector<double> Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs);
 };
