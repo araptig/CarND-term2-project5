@@ -14,6 +14,7 @@ public:
 
 	double max_steering_angle_rad;
 	double max_acc;
+	double max_value;
 	size_t n_vars;
 	size_t n_constraints;
 

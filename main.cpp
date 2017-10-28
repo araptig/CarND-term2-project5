@@ -8,8 +8,8 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "MPC.h"
 #include "json.hpp"
-//#include "matplotlibcpp.h"
 
+//#include "matplotlibcpp.h"
 //namespace plt = matplotlibcpp;
 
 // for convenience
@@ -58,7 +58,7 @@ double polyeval(Eigen::VectorXd coeffs, double x)
 }//evaluate polynomial
 
 Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,int order)
-{ // fit a polynomial
+{//fit a polynomial
   assert(xvals.size() == yvals.size());
   assert(order >= 1 && order <= xvals.size() - 1);
   Eigen::MatrixXd A(xvals.size(), order + 1);
@@ -69,11 +69,12 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,int order)
   }
 
   for (int j = 0; j < xvals.size(); j++)
-  {
-    for (int i = 0; i < order; i++) {
+  {//for
+    for (int i = 0; i < order; i++)
+    {
       A(j, i + 1) = A(j, i) * xvals(j);
     }
-  }
+  }//for
 
   auto Q = A.householderQr();
   auto result = Q.solve(yvals);
@@ -83,6 +84,8 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,int order)
 int main()
 {// main
   const int poly_order = 3;
+  const int latency    = 100;
+
   uWS::Hub h;
 
   // MPC is initialized here!
@@ -99,92 +102,78 @@ int main()
     {
       string s = hasData(sdata);
       if (s != "")
-      {
+      {//data
         auto j = json::parse(s);
         string event = j[0].get<string>();
-        if (event == "telemetry") {
+        if (event == "telemetry")
+        {//telemetry
           // j[1] is the data JSON object
-          vector<double> ptsx = j[1]["ptsx"];  //in map coordinates
-          vector<double> ptsy = j[1]["ptsy"];  //in map coordinates
+          vector<double> ptsx = j[1]["ptsx"];  //path in map coordinates
+          vector<double> ptsy = j[1]["ptsy"];  //path in map coordinates
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
 
+          vector<double> traj_car_x(ptsx.size());
+          vector<double> traj_car_y(ptsy.size());
           for(unsigned int i = 0; i < ptsx.size(); i++)
           {//map coordinates --> car coordinates
               double shift_x = ptsx[i] - px;
               double shift_y = ptsy[i] - py;
               double cos_p   = cos(psi);
               double sin_p   = sin(psi);
-
-              ptsx[i] =  shift_x * cos_p  +  shift_y * sin_p;
-              ptsy[i] = -shift_x * sin_p  +  shift_y * cos_p;
+              traj_car_x[i] =  shift_x * cos_p  +  shift_y * sin_p;
+              traj_car_y[i] = -shift_x * sin_p  +  shift_y * cos_p;
            }
 
-          // vector --> eigen
-           double* ptrx = &ptsx[0];
-           Eigen::Map<Eigen::VectorXd> ptsx_transform(ptrx, 6);
-           double* ptry = &ptsy[0];
-           Eigen::Map<Eigen::VectorXd> ptsy_transform(ptry, 6);
-          // coefficients of trajectory in car coordinates
-          Eigen::VectorXd coeffs = polyfit(ptsx_transform, ptsy_transform, poly_order);
-
-          // all in car coordinates
-          //double cte = polyeval(coeffs, px) - py;
-          //double epsi = psi - atan(coeffs[1]);
-          double cte  = coeffs[0];
-          double epsi = - atan(coeffs[1]);
+          Eigen::VectorXd coeffs;
+          {//coefficients of trajectory in car coordinates
+        	  // vector --> eigen
+        	  double* ptrx = &traj_car_x[0];
+        	  Eigen::Map<Eigen::VectorXd> ptsx_transform(ptrx, 6);
+        	  double* ptry = &traj_car_y[0];
+        	  Eigen::Map<Eigen::VectorXd> ptsy_transform(ptry, 6);
+        	  coeffs = polyfit(ptsx_transform, ptsy_transform, poly_order);
+          }
 
           Eigen::VectorXd state(6);
-          {//px=0, py=0, psi=0
-        	  //state << px, py, psi, v, cte, epsi;
-        	  state << 0, 0, 0, v, cte, epsi;
+          {//in car cooridnates px=0, py=0, psi=0
+              double cte  = coeffs[0];
+              double epsi = - atan(coeffs[1]);
+              state << 0, 0, 0, v, cte, epsi;
           }//
 
+          // get control signals, [0] is in degrees
           vector<double> control = mpc.Solve(state,coeffs);
 
-          //steering angle and throttle using MPC
-          // Both are in between [-1, 1]==> made constraint in MPC.CPP
-          double steer_value    = control[0]/ deg2rad(25);
-          double throttle_value = control[1];
-
           json msgJson;
-          // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
-          // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
-          msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = throttle_value;
+          {//provide control signals and trajectories
+        	  //(a) apply steering angle & throttle, normalized to be between [-1, 1]
+        	  double steer_value    = control[0]/ deg2rad(25);
+        	  double throttle_value = control[1];
+        	  msgJson["steering_angle"] = steer_value;
+        	  msgJson["throttle"] = throttle_value;
 
-          //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals = mpc.traj_x;
-          vector<double> mpc_y_vals = mpc.traj_y;
-          msgJson["mpc_x"] = mpc_x_vals;
-          msgJson["mpc_y"] = mpc_y_vals;
+        	  //(b) Display the MPC predicted trajectory
+              msgJson["mpc_x"] = mpc.traj_x;
+              msgJson["mpc_y"] = mpc.traj_y;
 
-          //Display the waypoints/reference line
-          vector<double> next_x_vals;
-          vector<double> next_y_vals;
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Yellow line
-          msgJson["next_x"] = ptsx;
-          msgJson["next_y"] = ptsy;
-
+              //(c) Display reference trajectory
+              //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
+              // the points in the simulator are connected by a Yellow line
+              msgJson["next_x"] = traj_car_x;
+              msgJson["next_y"] = traj_car_y;
+          }
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
-          // Latency
-          // The purpose is to mimic real driving conditions where
-          // the car does actuate the commands instantly.
-          //
-          // Feel free to play around with this value but should be to drive
-          // around the track with 100ms latency.
-          //
-          // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
-          // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(1));
+          // latency because car does not actuate the commands instantly.
+          this_thread::sleep_for(chrono::milliseconds(latency));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
-        }
-      } else
+        }//data
+      }//telemetry
+      else
       {// Manual driving
         std::string msg = "42[\"manual\",{}]";
         ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);

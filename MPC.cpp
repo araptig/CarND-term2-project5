@@ -19,21 +19,20 @@ size_t a_start = delta_start + N - 1;
 class FG_eval
 {//FG_eval
  public:
-  // Fitted polynomial coefficients
-  Eigen::VectorXd coeffs;
-  const double ref_v            = 45;
-  const double dt               = 0.1;
-  const double Lf	 			= 2.67;
+  Eigen::VectorXd coeffs;					//polynomial coefficients
 
-  const double wt_cte 			= 100.0;
-  const double wt_orientation   = 100;
-  const double wt_velocity      = 1;
+  const double ref_v            = 40;		//velocity reference
+  const double dt               = 0.1;		//sample interval
+  const double Lf	 			= 2.67;     //car size
+
+  // cost weights
+  const double wt_cte 			= 1;
+  const double wt_orientation   = 5;
+  const double wt_velocity      = .1;
   const double wt_steer_angle	= 0;
-  const double wt_steer_angle_d = 0;
+  const double wt_steer_angle_d = 0.3;
   const double wt_acc           = 0;
   const double wt_acc_d         = 0;
-
-
 
   FG_eval(Eigen::VectorXd _coeffs)
   {//construct
@@ -43,48 +42,45 @@ class FG_eval
   // define ADvector to interact with CppAD
   typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
 
-  // `fg` is a vector containing the cost and constraints.
-  // `vars` is a vector containing the variable values (state & actuators)
-  // this operator determines the cost
+  // `fg`  contains the cost [0] and constraints.
+  // `vars` contains the variable values (state & actuators)
+  // operator determines fg from vars
   void operator()(ADvector& fg, const ADvector& vars)
   {//operator
-	  // cost = fg[0]
+
+	  // (I) cost = fg[0]
 	  fg[0] = 0;
-
-	  // The part of the cost based on the reference state.
 	  for (unsigned int t = 0; t < N; t++)
-	  {//cost
-		  fg[0] += wt_cte*CppAD::pow(vars[cte_start + t], 2);		 // cte
-	      fg[0] += wt_orientation*CppAD::pow(vars[epsi_start + t], 2);		 // orientation
-	      fg[0] += wt_velocity*CppAD::pow(vars[v_start + t] - ref_v, 2); // velocity mismatch penalty
-	   }
+	  {//cost due to cte/orientation/velocity
+		  fg[0] += wt_cte*CppAD::pow(vars[cte_start + t], 2);		 		// cte
+	      fg[0] += wt_orientation*CppAD::pow(vars[epsi_start + t], 2);		// orientation
+	      fg[0] += wt_velocity*CppAD::pow(vars[v_start + t] - ref_v, 2); 	// velocity mismatch penalty
+	  }
 
-	    // Minimize the use of actuators.
-	    for (unsigned int t = 0; t < N - 1; t++)
-	    {
-	    	fg[0] += wt_steer_angle*CppAD::pow(vars[delta_start + t], 2);  	// delta amplitude penalty
-	        fg[0] += wt_acc*CppAD::pow(vars[a_start + t], 2);			// acceleration amplitude penalty
-	    }
+	  // Minimize the use of actuators.
+	  for (unsigned int t = 0; t < N - 1; t++)
+	  {//cost due to control signal level
+		  fg[0] += wt_steer_angle*CppAD::pow(vars[delta_start + t], 2);  	// delta amplitude penalty
+	      fg[0] += wt_acc*CppAD::pow(vars[a_start + t], 2);			// acceleration amplitude penalty
+	  }
 
-	    // Minimize the value gap between sequential actuations.
-	    for (unsigned int t = 0; t < N - 2; t++)
-	    {
-	    	fg[0] += wt_steer_angle_d * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-	        fg[0] += wt_acc_d * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
-	    }
+	  // cost due to large differential actuations (i.e. abrupt changes)
+	  for (unsigned int t = 0; t < N - 2; t++)
+	  {
+		  fg[0] += wt_steer_angle_d * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+	      fg[0] += wt_acc_d * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+	  }
 
-	    // Setup model Constraints
-	    // -----------------------
-	    // Initial constraints:
-	    // add 1 to each of the starting indices due to cost being located at [0]
-	    fg[1 + x_start] = vars[x_start];
-	    fg[1 + y_start] = vars[y_start];
-	    fg[1 + psi_start] = vars[psi_start];
-	    fg[1 + v_start] = vars[v_start];
-	    fg[1 + cte_start] = vars[cte_start];
-	    fg[1 + epsi_start] = vars[epsi_start];
+	    // (II) Constraints
+	    // (a) initial constraints:
+	    fg[1 + x_start] 	= vars[x_start];
+	    fg[1 + y_start] 	= vars[y_start];
+	    fg[1 + psi_start] 	= vars[psi_start];
+	    fg[1 + v_start] 	= vars[v_start];
+	    fg[1 + cte_start] 	= vars[cte_start];
+	    fg[1 + epsi_start] 	= vars[epsi_start];
 
-	    // The rest of the constraints
+	    // (b) rest of constraints:
 	    for (unsigned int t = 1; t < N; t++)
 	    {// trajectory points
 	    	// The idea here is to constraint this value to be 0
@@ -106,8 +102,18 @@ class FG_eval
 	    	AD<double> epsi0 = vars[epsi_start + t - 1];
 
 	    	// Only consider the actuation at time t.
-	    	AD<double> delta0 = vars[delta_start + t - 1];
-	    	AD<double> a0 = vars[a_start + t - 1];
+	    	AD<double> delta0;
+	    	AD<double> a0;
+	    	if(t==1)
+	    	{
+	    		delta0 = vars[delta_start + t - 1];
+	    		a0 = vars[a_start + t - 1];
+	    	}
+	    	else
+	    	{// use previous actuations (to account for latency)
+	    		a0 = vars[a_start + t - 2];
+	    	    delta0 = vars[delta_start + t - 2];
+	    	}
 
 	    	AD<double> f0 = coeffs[0] + coeffs[1]*x0 + coeffs[2]*x0*x0 + coeffs[3]*x0*x0*x0;
 	    	AD<double> psides0 = CppAD::atan(coeffs[1] + 2*coeffs[2]*x0 + 3*coeffs[3]*x0*x0);
@@ -120,8 +126,9 @@ class FG_eval
 	    	// cte[t+1] = f(x[t]) - y[t] + v[t] * sin(epsi[t]) * dt
 	    	// epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
 	    	fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
+	    	cout << "fg " << fg[1 + x_start + t] << " " <<  - (v0 * CppAD::cos(psi0) * dt) << endl;
 	    	fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
-	    	fg[1 + psi_start + t] = psi1 - (psi0 - v0 * delta0 / Lf * dt);//  + -> -
+	    	fg[1 + psi_start + t] = psi1 - (psi0 - v0 * delta0 / Lf * dt);//  + -> - for steering angle
 	    	fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
 	    	fg[1 + cte_start + t] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
 	    	fg[1 + epsi_start + t] = epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
@@ -132,22 +139,21 @@ class FG_eval
 
 MPC::MPC()
 {
-	max_steering_angle_rad = .436332;
+	max_steering_angle_rad = (25.0/180.0) * M_PI;
 	max_acc                = 1.0;
+	max_value              = 1.0e19;
 
-	// N time-steps == N-1 actuations
-	n_vars 		  = N * 6 + (N - 1) * 2;
-	n_constraints = N * 6;
+	// N time-steps  N-1 actuations
+	n_vars 		  = 6*N + (N-1)*2;
+	n_constraints = 6*N;
 }
 MPC::~MPC() {}
 
 vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs)
 {//solve
-  bool ok = true;
   typedef CPPAD_TESTVECTOR(double) Dvector;
 
-
-  // easier notation
+  // for easier notation
   double x = state[0];
   double y = state[1];
   double psi = state[2];
@@ -155,52 +161,48 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs)
   double cte = state[4];
   double epsi = state[5];
 
-  // (1) independent variables
+  // (a) vars: independent variables
   Dvector vars(n_vars);
-  {//initialize vars
-	  Dvector vars(n_vars);
+  {//vars
 	  for (unsigned int i = 0; i < n_vars; i++)
 	  {
 		  vars[i] = 0;
 	  }
 
 	  // Set the initial variable values
-	  vars[x_start] = x;
-	  vars[y_start] = y;
-	  vars[psi_start] = psi;
-	  vars[v_start] = v;
-	  vars[cte_start] = cte;
-	  vars[epsi_start] = epsi;
-  }// initialize vars
+	  vars[x_start] 	= x;
+	  vars[y_start] 	= y;
+	  vars[psi_start] 	= psi;
+	  vars[v_start] 	= v;
+	  vars[cte_start] 	= cte;
+	  vars[epsi_start] 	= epsi;
+  }//vars
 
-  // (2) Lower and upper limits for x
+  // (b) bounds on vars
   Dvector vars_lowerbound(n_vars);
   Dvector vars_upperbound(n_vars);
-  {// sets bounds
-    	// Set all non-actuators upper and lowerlimits
-    	// to the max negative and positive values.
+  {//vars bounds
     	for (unsigned int i = 0; i < delta_start; i++)
-    	{
-    		vars_lowerbound[i] = -1.0e19;
-    		vars_upperbound[i] = 1.0e19;
+    	{// non-actuators bounds set to the max /pm values
+    		vars_lowerbound[i] = -max_value;
+    		vars_upperbound[i] =  max_value;
     	}
 
-    	// bounds of delta in radians
     	for (unsigned int i = delta_start; i < a_start; i++)
-    	{
+    	{// bounds of delta in radians
     		vars_lowerbound[i] = -max_steering_angle_rad;
-    		vars_upperbound[i] = max_steering_angle_rad;
+    		vars_upperbound[i] =  max_steering_angle_rad;
     	}
 
     	// Acceleration/decceleration bounds
     	for (unsigned int i = a_start; i < n_vars; i++)
     	{
     		vars_lowerbound[i] = -max_acc;
-    		vars_upperbound[i] = max_acc;
+    		vars_upperbound[i] =  max_acc;
     	}
-  }// set bounds
+  }//vars bounds
 
-  // Lower and upper limits for constraints
+  // (c) bounds on constraints
   Dvector constraints_lowerbound(n_constraints);
   Dvector constraints_upperbound(n_constraints);
   {//constraint bounds
@@ -224,12 +226,8 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs)
     constraints_upperbound[epsi_start] = epsi;
   }// constraint bounds
 
-
-  // object that computes objective and constraints
-  FG_eval fg_eval(coeffs);
-
-
-  std::string options;	// options for IPOPT solver
+  // (d) options for IPOPT solver (did not change)
+  std::string options;
   {//options
 	  // Uncomment this if you'd like more print information
 	  options += "Integer print_level  0\n";
@@ -243,23 +241,31 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs)
 	  // NOTE: Currently the solver has a maximum time limit of 0.5 seconds.
 	  // Change this as you see fit.
 	  options += "Numeric max_cpu_time          0.5\n";
-  }
+  }//optiotns
 
-  // place to return solution
+  // (e) define return vector called solution
   CppAD::ipopt::solve_result<Dvector> solution;
+
+  // construct fg_eval class
+  FG_eval fg_eval(coeffs);
 
   // solve the problem
   CppAD::ipopt::solve<Dvector, FG_eval>(
       options, vars, vars_lowerbound, vars_upperbound, constraints_lowerbound,
       constraints_upperbound, fg_eval, solution);
 
-  // Check some of the solution values
-  ok &= solution.status == CppAD::ipopt::solve_result<Dvector>::success;
+  // (a) check status
+  bool ok = (solution.status == CppAD::ipopt::solve_result<Dvector>::success);
+  if (ok == false)
+  {
+	  cout << "ok = " << ok << endl;
+  }
 
-  // Cost
+  // (b) print cost
   auto cost = solution.obj_value;
-  std::cout << "Cost " << cost << std::endl;
+  cout << "Cost " << cost << endl << endl;
 
+  // (c) store predicted trajectory
   traj_x = {};
   traj_y = {};
   for (unsigned int i = 0; i < N; i++)
