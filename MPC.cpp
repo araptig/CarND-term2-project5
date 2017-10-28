@@ -5,8 +5,10 @@
 
 using CppAD::AD;
 
+// part of this code is from "Mind the line" solution
+
 // Global parameters used both by GF_eval & MPC
-size_t N = 10;							// steps
+size_t N = 10;							   // steps
 size_t x_start = 0;
 size_t y_start = x_start + N;
 size_t psi_start = y_start + N;
@@ -28,7 +30,7 @@ class FG_eval
   // cost weights
   const double wt_cte 			= 1;
   const double wt_orientation   = 7;
-  const double wt_velocity      = .1;
+  const double wt_velocity      = 0.1;
   const double wt_steer_angle	= 0;
   const double wt_steer_angle_d = 0.3;
   const double wt_acc           = 0;
@@ -42,13 +44,14 @@ class FG_eval
   // define ADvector to interact with CppAD
   typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
 
-  // `fg`  contains the cost [0] and constraints.
+  // `fg`  contains the cost & constraints
   // `vars` contains the variable values (state & actuators)
   // operator determines fg from vars
   void operator()(ADvector& fg, const ADvector& vars)
   {//operator: vars --> fg
 
 	  // (I) cost = fg[0]
+	  //-----------------
 	  fg[0] = 0;
 	  for (unsigned int t = 0; t < N; t++)
 	  {//cost due to cte/orientation/velocity
@@ -72,6 +75,7 @@ class FG_eval
 	  }
 
 	    // (II) Constraints
+	    // ----------------
 	    // (a) initial constraints:
 	    fg[1 + x_start] 	= vars[x_start];
 	    fg[1 + y_start] 	= vars[y_start];
@@ -102,37 +106,18 @@ class FG_eval
 	    	AD<double> epsi0 = vars[epsi_start + t - 1];
 
 	    	// Only consider the actuation at time t.
-	    	AD<double> delta0;
-	    	AD<double> a0;
-	    	//if(t==1)
-	    	//{
-	    	//	delta0 = vars[delta_start];
-	    	//	a0 = vars[a_start];
-	    	//}
-	    	//else
-	    	//{// use previous actuation to account for latency: here dt = latency = 0.1 s
-	    	//	a0 = vars[a_start + t - 2];
-	    	 //   delta0 = vars[delta_start + t - 2];
-	    	//}
-	    	a0 = vars[a_start + t - 1];
-	        delta0 = vars[delta_start + t - 1];
-
+	    	AD<double> a0 = vars[a_start + t - 1];
+	    	AD<double> delta0 = vars[delta_start + t - 1];
 	    	AD<double> f0 = coeffs[0] + coeffs[1]*x0 + coeffs[2]*x0*x0 + coeffs[3]*x0*x0*x0;
-	    	AD<double> psides0 = CppAD::atan(coeffs[1] + 2*coeffs[2]*x0 + 3*coeffs[3]*x0*x0);
+	    	AD<double> psi_ref0 = CppAD::atan(coeffs[1] + 2*coeffs[2]*x0 + 3*coeffs[3]*x0*x0);
 
 	    	// equations for the model:
-	    	// x_[t+1] = x[t] + v[t] * cos(psi[t]) * dt
-	    	// y_[t+1] = y[t] + v[t] * sin(psi[t]) * dt
-	    	// psi_[t+1] = psi[t] + v[t] / Lf * delta[t] * dt
-	    	// v_[t+1] = v[t] + a[t] * dt
-	    	// cte[t+1] = f(x[t]) - y[t] + v[t] * sin(epsi[t]) * dt
-	    	// epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
 	    	fg[1+x_start+t] 	= x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
 	    	fg[1+ y_start+t] 	= y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
 	    	fg[1+psi_start+t] 	= psi1 - (psi0 - v0 * delta0 / Lf * dt);//  + -> - for steering angle
 	    	fg[1+v_start+t] 	= v1 - (v0 + a0 * dt);
 	    	fg[1+cte_start+t] 	= cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
-	    	fg[1+epsi_start+t] 	= epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
+	    	fg[1+epsi_start+t] 	= epsi1 - ((psi0 - psi_ref0) + v0 * delta0 / Lf * dt);
 	    }//at each trajectory point
   	}//operator
   };//FG_eval

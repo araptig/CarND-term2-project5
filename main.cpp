@@ -9,9 +9,6 @@
 #include "MPC.h"
 #include "json.hpp"
 
-//#include "matplotlibcpp.h"
-//namespace plt = matplotlibcpp;
-
 // for convenience
 using json = nlohmann::json;
 
@@ -221,3 +218,11 @@ int main()
   }
   h.run();
 }// main
+
+
+
+
+
+
+
+
