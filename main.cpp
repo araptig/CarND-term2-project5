@@ -138,7 +138,6 @@ int main()
         	  coeffs = polyfit(ptsx_transform, ptsy_transform, poly_order);
           }
 
-
           Eigen::VectorXd state(6);
           {// in car coordinates px=0, py=0, psi=0
               double cte  = coeffs[0];     		// f(0) = c_0
@@ -153,18 +152,21 @@ int main()
             	  //change of sign because turning left is negative sign in simulator but positive yaw for MPC (not doing it)
 
             	  // control signals
-            	  double delta = j[1]["steering_angle"];      // minus because different convention
-            	  delta *= -deg2rad(25);
+            	  double delta = j[1]["steering_angle"];    // minus because different convention
+            	  delta *= -deg2rad(25);					// back to radians
             	  double a     = j[1]["throttle"];
 
+
             	  //delay model state by latency
-            	  double temp = v*delta*latency / 2.67;
-            	  state[0] = v*cos(delta)*latency;   			//px
-            	  state[1] = v*sin(delta)*latency;   			//py
-            	  state[2] = delta + temp;						//psi
-            	  state[4] = cte  + v*sin(epsi)*latency;     	//cte
-            	  state[5] = epsi + temp;						//epsi
-            	  state[3]  = v   + a*latency;                  //vel
+            	  double v_l  = v*latency;
+            	  double Lf = 2.67;
+            	  double temp = v_l*delta/Lf;
+            	  state[0] = v_l*cos(delta);   			//px
+            	  state[1] = v_l*sin(delta);   			//py
+            	  state[2] = delta + temp;				//psi
+            	  state[4] = cte  + v_l*sin(epsi);     	//cte
+            	  state[5] = epsi + temp;				//epsi
+            	  state[3]  = v   + a*latency;          //vel
               }//latency compensation
           }//
 

@@ -18,25 +18,26 @@ size_t epsi_start = cte_start + N;
 size_t delta_start = epsi_start + N;
 size_t a_start = delta_start + N - 1;
 
+
 class FG_eval
 {//FG_eval
  public:
   Eigen::VectorXd coeffs;					//polynomial coefficients
 
-  const double mph2mps          = 0.44704;  // miles per hour to meters per second
-  const double ref_v            = 85;
-  const double ref_v_mps        = ref_v*mph2mps;		//velocity reference in miles per hour
-  const double dt               = 0.1;		//sample interval
-  const double Lf	 			= 2.67;     //car size
+  const double mph2mps          = 0.44704;  		// miles per hour to meters per second
+  const double ref_v            = 90;
+  const double ref_v_mps        = ref_v*mph2mps;	//velocity reference in miles per hour
+  const double dt               = .8/N;				//sample interval
+  const double Lf	 			= 2.67;     		//car size
 
   // cost weights
   const double wt_cte 			= 1;
-  const double wt_orientation   = 10;
-  const double wt_velocity      = 0.2;
+  const double wt_orientation   = 20;
+  const double wt_velocity      = 0.05;
   const double wt_steer_angle	= 0;
-  const double wt_steer_angle_d = 0.3;
+  const double wt_steer_angle_d = 1000;
   const double wt_acc           = 0;
-  const double wt_acc_d         = 0;
+  const double wt_acc_d         = 10;
 
   FG_eval(Eigen::VectorXd _coeffs)
   {//construct
@@ -110,16 +111,20 @@ class FG_eval
 	    	// Only consider the actuation at time t.
 	    	AD<double> a0 = vars[a_start + t - 1];
 	    	AD<double> delta0 = vars[delta_start + t - 1];
-	    	AD<double> f0 = coeffs[0] + coeffs[1]*x0 + coeffs[2]*x0*x0 + coeffs[3]*x0*x0*x0;
-	    	AD<double> psi_ref0 = CppAD::atan(coeffs[1] + 2*coeffs[2]*x0 + 3*coeffs[3]*x0*x0);
+	    	AD<double> x2 = x0*x0;
+	    	AD<double> f0 = coeffs[0] + coeffs[1]*x0 + coeffs[2]*x2 + coeffs[3]*x2*x0;
+	    	AD<double> psi_ref0 = CppAD::atan(coeffs[1] + 2*coeffs[2]*x0 + 3*coeffs[3]*x2);
 
 	    	// equations for the model:
-	    	fg[1+x_start+t] 	= x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
-	    	fg[1+ y_start+t] 	= y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
-	    	fg[1+psi_start+t] 	= psi1 - (psi0 + v0 * delta0 / Lf * dt);//  + -> - for steering angle
+	    	AD<double> v0_t = v0 * dt;
+	    	AD<double> temp = v0_t * delta0 / Lf;
+
+	    	fg[1+x_start+t] 	= x1 - (x0 + v0_t * CppAD::cos(psi0));
+	    	fg[1+ y_start+t] 	= y1 - (y0 + v0_t * CppAD::sin(psi0));
+	    	fg[1+psi_start+t] 	= psi1 - (psi0 + temp);
 	    	fg[1+v_start+t] 	= v1 - (v0 + a0 * dt);
 	    	fg[1+cte_start+t] 	= cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
-	    	fg[1+epsi_start+t] 	= epsi1 - ((psi0 - psi_ref0) + v0 * delta0 / Lf * dt);
+	    	fg[1+epsi_start+t] 	= epsi1 - ((psi0 - psi_ref0) + temp);
 	    }//at each trajectory point
   	}//operator
   };//FG_eval
