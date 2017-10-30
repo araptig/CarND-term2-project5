@@ -80,8 +80,11 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,int order)
 
 int main()
 {// main
-  const int poly_order = 3;
-  const int latency    = 100;
+  const int poly_order 	= 3;
+  const int latency    	= 0.1;
+  const int latency_ms  = 1000*latency;
+  //double Lf 		= 2.67;
+  const bool with_latency_comp = true;
 
   uWS::Hub h;
 
@@ -110,7 +113,8 @@ int main()
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
-          double v = j[1]["speed"];
+          double v = j[1]["speed"];  // miles per hour
+          v       *= 0.44704;        // meters per second
 
           vector<double> traj_car_x(ptsx.size());
           vector<double> traj_car_y(ptsy.size());
@@ -134,11 +138,34 @@ int main()
         	  coeffs = polyfit(ptsx_transform, ptsy_transform, poly_order);
           }
 
+
           Eigen::VectorXd state(6);
-          {//in car cooridnates px=0, py=0, psi=0
-              double cte  = coeffs[0];
-              double epsi = - atan(coeffs[1]);
-              state << 0, 0, 0, v, cte, epsi;
+          {// in car coordinates px=0, py=0, psi=0
+              double cte  = coeffs[0];     		// f(0) = c_0
+              double epsi = - atan(coeffs[1]);	// because px = 0
+
+              if (with_latency_comp == false)
+              {
+            	    state << 0, 0, 0, v, cte, epsi;
+              }
+              else
+              {//latency compensation
+            	  //change of sign because turning left is negative sign in simulator but positive yaw for MPC (not doing it)
+
+            	  // control signals
+            	  double delta = j[1]["steering_angle"];      // minus because different convention
+            	  delta *= -deg2rad(25);
+            	  double a     = j[1]["throttle"];
+
+            	  //delay model state by latency
+            	  double temp = v*delta*latency / 2.67;
+            	  state[0] = v*cos(delta)*latency;   			//px
+            	  state[1] = v*sin(delta)*latency;   			//py
+            	  state[2] = delta + temp;						//psi
+            	  state[4] = cte  + v*sin(epsi)*latency;     	//cte
+            	  state[5] = epsi + temp;						//epsi
+            	  state[3]  = v   + a*latency;                  //vel
+              }//latency compensation
           }//
 
           // get control signals, [0] is in degrees
@@ -147,7 +174,7 @@ int main()
           json msgJson;
           {//provide control signals and trajectories
         	  //(a) apply steering angle & throttle, normalized to be between [-1, 1]
-        	  double steer_value    = control[0]/ deg2rad(25);
+        	  double steer_value    = -control[0]/ deg2rad(25);
         	  double throttle_value = control[1];
         	  msgJson["steering_angle"] = steer_value;
         	  msgJson["throttle"] = throttle_value;
@@ -166,7 +193,7 @@ int main()
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
           // latency because car does not actuate the commands instantly.
-          this_thread::sleep_for(chrono::milliseconds(latency));
+          this_thread::sleep_for(chrono::milliseconds(latency_ms));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }//data
       }//telemetry
@@ -218,11 +245,3 @@ int main()
   }
   h.run();
 }// main
-
-
-
-
-
-
-
-
